@@ -1,7 +1,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <unistd.h>
+#include <fcntl.h>
 #include <arpa/inet.h>
+#include <errno.h>
+#include <limits.h>
 #include "connection_list.h"
 
 const time_t connection_list::EXPIRATION_TIMEOUT = 2 * 60 * 60;
@@ -9,7 +13,7 @@ const size_t connection_list::CONNECTIONS_ALLOC = 1024;
 const size_t connection_list::INDICES_ALLOC = 128;
 const size_t connection_list::IP_FRAGMENTS_ALLOC = 32;
 
-connection_list::connection_list()
+connection_list::connection_list() : _M_buf(64 * 1024)
 {
 	_M_fragments = NULL;
 
@@ -21,6 +25,10 @@ connection_list::connection_list()
 	_M_tail = -1;
 
 	_M_free_connection = -1;
+
+	_M_index.indices = NULL;
+	_M_index.size = 0;
+	_M_index.used = 0;
 }
 
 void connection_list::free()
@@ -56,6 +64,14 @@ void connection_list::free()
 	_M_tail = -1;
 
 	_M_free_connection = -1;
+
+	if (_M_index.indices) {
+		::free(_M_index.indices);
+		_M_index.indices = NULL;
+	}
+
+	_M_index.size = 0;
+	_M_index.used = 0;
 }
 
 bool connection_list::create()
@@ -106,7 +122,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 	// Search IP fragment.
 	ip_fragment* fragment;
 	size_t pos;
-	if ((fragment = search(fragments, &addresses[0], pos)) == NULL) {
+	if ((fragment = search(fragments, addresses[0], pos)) == NULL) {
 		// If not a SYN + ACK...
 		if ((!tcp_header->syn) || (!tcp_header->ack)) {
 			// Ignore packet.
@@ -134,7 +150,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 
 	// Search index in IP fragment.
 	size_t index;
-	if (!search(fragment, &addresses[0], ports[0], &addresses[1], ports[1], index)) {
+	if (!search(fragment, addresses[0], ports[0], addresses[1], ports[1], index)) {
 		// If not a SYN + ACK...
 		if ((!tcp_header->syn) || (!tcp_header->ack)) {
 			// Ignore packet.
@@ -198,24 +214,74 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 
 void connection_list::delete_expired(time_t now)
 {
+	connection* connections = _M_connections.connections;
+
 	while (_M_tail != -1) {
-		connection* conn = &_M_connections.connections[_M_tail];
+		connection* conn = &connections[_M_tail];
 
 		if (conn->timestamp + EXPIRATION_TIMEOUT > now) {
 			return;
 		}
 
+#if DEBUG
+		const unsigned char* srcip = (const unsigned char*) &conn->srcip;
+		const unsigned char* destip = (const unsigned char*) &conn->destip;
+
+		printf("Deleting expired connection: %u.%u.%u.%u:%u %s %u.%u.%u.%u:%u, timestamp: %ld.\n", srcip[0], srcip[1], srcip[2], srcip[3], conn->srcport, (conn->direction == 0) ? "->" : "<-", destip[0], destip[1], destip[2], destip[3], conn->destport, conn->timestamp);
+#endif // DEBUG
+
 		delete_connection(_M_tail);
 	}
+}
+
+bool connection_list::save(const char* filename, bool ordered)
+{
+	char tmpfilename[PATH_MAX + 1];
+	snprintf(tmpfilename, sizeof(tmpfilename), "%s.tmp", filename);
+
+	int fd;
+	if ((fd = open(tmpfilename, O_WRONLY | O_CREAT | O_TRUNC, 0644)) < 0) {
+		return false;
+	}
+
+	_M_buf.reset();
+
+	if (!serialize(ordered, _M_buf)) {
+		close(fd);
+		unlink(tmpfilename);
+
+		return false;
+	}
+
+	size_t written = 0;
+	while (written < _M_buf.count()) {
+		ssize_t ret;
+		if ((ret = write(fd, _M_buf.data() + written, _M_buf.count() - written)) < 0) {
+			if (errno != EINTR) {
+				close(fd);
+				unlink(tmpfilename);
+
+				return false;
+			}
+		} else if (ret > 0) {
+			written += ret;
+		}
+	}
+
+	close(fd);
+
+	return (rename(tmpfilename, filename) == 0);
 }
 
 void connection_list::print() const
 {
 	printf("# of connections: %u:\n", _M_connections.used);
 
+	const connection* connections = _M_connections.connections;
+
 	int i = _M_head;
 	while (i != -1) {
-		const connection* conn = &_M_connections.connections[i];
+		const connection* conn = &connections[i];
 
 		const unsigned char* saddr = (const unsigned char*) &conn->srcip;
 		const unsigned char* daddr = (const unsigned char*) &conn->destip;
@@ -228,6 +294,37 @@ void connection_list::print() const
 
 		i = conn->next;
 	}
+}
+
+bool connection_list::serialize(bool ordered, buffer& buf)
+{
+	const connection* connections = _M_connections.connections;
+
+	if (!ordered) {
+		int i = _M_head;
+		while (i != -1) {
+			if (!connections[i].serialize(buf)) {
+				return false;
+			}
+
+			i = connections[i].next;
+		}
+	} else {
+		if (!build_index()) {
+			return false;
+		}
+
+		const unsigned* indices = _M_index.indices;
+		size_t used = _M_index.used;
+
+		for (size_t i = 0; i < used; i++) {
+			if (!connections[indices[i]].serialize(buf)) {
+				return false;
+			}
+		}
+	}
+
+	return true;
 }
 
 connection_list::connection* connection_list::allocate_connection()
@@ -315,6 +412,21 @@ bool connection_list::allocate_ip_fragment(ip_fragments* fragments)
 	return true;
 }
 
+bool connection_list::allocate_indices()
+{
+	if (_M_index.size < _M_connections.used) {
+		unsigned* indices;
+		if ((indices = (unsigned*) realloc(_M_index.indices, _M_connections.used * sizeof(unsigned))) == NULL) {
+			return false;
+		}
+
+		_M_index.indices = indices;
+		_M_index.size = _M_connections.used;
+	}
+
+	return true;
+}
+
 void connection_list::delete_connection(unsigned short srcport, size_t pos, size_t index)
 {
 	ip_fragments* fragments = &_M_fragments[srcport];
@@ -384,13 +496,13 @@ bool connection_list::delete_connection(unsigned connidx)
 	// Search IP fragment.
 	ip_fragment* fragment;
 	size_t pos;
-	if ((fragment = search(&_M_fragments[conn->srcport], &conn->srcip, pos)) == NULL) {
+	if ((fragment = search(&_M_fragments[conn->srcport], conn->srcip, pos)) == NULL) {
 		return false;
 	}
 
 	// Search index in IP fragment.
 	size_t index;
-	if (!search(fragment, &conn->srcip, conn->srcport, &conn->destip, conn->destport, index)) {
+	if (!search(fragment, conn->srcip, conn->srcport, conn->destip, conn->destport, index)) {
 		return false;
 	}
 
@@ -399,14 +511,14 @@ bool connection_list::delete_connection(unsigned connidx)
 	return true;
 }
 
-connection_list::ip_fragment* connection_list::search(const ip_fragments* fragments, const ip_address* addr, size_t& pos)
+connection_list::ip_fragment* connection_list::search(const ip_fragments* fragments, const ip_address& addr, size_t& pos)
 {
 	ip_fragment* f = fragments->fragments;
 
 	int i = 0;
 	int j = fragments->used - 1;
 
-	unsigned char data = ((const unsigned char*) addr)[sizeof(ip_address) - 1];
+	unsigned char data = ((const unsigned char*) &addr)[sizeof(ip_address) - 1];
 
 	while (i <= j) {
 		int pivot = (i + j) / 2;
@@ -426,8 +538,9 @@ connection_list::ip_fragment* connection_list::search(const ip_fragments* fragme
 	return NULL;
 }
 
-bool connection_list::search(const ip_fragment* fragment, const ip_address* srcip, unsigned short srcport, const ip_address* destip, unsigned short destport, size_t& pos) const
+bool connection_list::search(const ip_fragment* fragment, const ip_address& srcip, unsigned short srcport, const ip_address& destip, unsigned short destport, size_t& pos) const
 {
+	const connection* connections = _M_connections.connections;
 	const unsigned* indices = fragment->indices;
 
 	int i = 0;
@@ -435,17 +548,17 @@ bool connection_list::search(const ip_fragment* fragment, const ip_address* srci
 
 	while (i <= j) {
 		int pivot = (i + j) / 2;
-		connection* conn = &_M_connections.connections[indices[pivot]];
+		const connection* conn = &connections[indices[pivot]];
 
-		if (*srcip < conn->srcip) {
+		if (srcip < conn->srcip) {
 			j = pivot - 1;
-		} else if (*srcip == conn->srcip) {
+		} else if (srcip == conn->srcip) {
 			if (srcport < conn->srcport) {
 				j = pivot - 1;
 			} else if (srcport == conn->srcport) {
-				if (*destip < conn->destip) {
+				if (destip < conn->destip) {
 					j = pivot - 1;
-				} else if (*destip == conn->destip) {
+				} else if (destip == conn->destip) {
 					if (destport < conn->destport) {
 						j = pivot - 1;
 					} else if (destport == conn->destport) {
@@ -468,4 +581,76 @@ bool connection_list::search(const ip_fragment* fragment, const ip_address* srci
 	pos = i;
 
 	return false;
+}
+
+bool connection_list::build_index()
+{
+	if (!allocate_indices()) {
+		return false;
+	}
+
+	const connection* connections = _M_connections.connections;
+	unsigned* indices = _M_index.indices;
+
+	_M_index.used = 0;
+
+	int idx = _M_head;
+	while (idx != -1) {
+		const connection* conn = &connections[idx];
+
+		size_t pos;
+		search(conn->srcip, conn->destip, pos);
+
+		if (pos < _M_index.used) {
+			memmove(&indices[pos + 1], &indices[pos], (_M_index.used - pos) * sizeof(unsigned));
+		}
+
+		indices[pos] = idx;
+
+		_M_index.used++;
+
+		idx = conn->next;
+	}
+
+	return true;
+}
+
+void connection_list::search(const ip_address& srcip, const ip_address& destip, size_t& pos) const
+{
+	const connection* connections = _M_connections.connections;
+	const unsigned* indices = _M_index.indices;
+
+	int i = 0;
+	int j = _M_index.used - 1;
+
+	while (i <= j) {
+		int pivot = (i + j) / 2;
+		const connection* conn = &connections[indices[pivot]];
+
+		int ret = ip_address::compare(srcip, conn->srcip);
+		if (ret < 0) {
+			j = pivot - 1;
+		} else if (ret == 0) {
+			ret = ip_address::compare(destip, conn->destip);
+			if (ret < 0) {
+				j = pivot - 1;
+			} else if (ret == 0) {
+				while (++pivot < (int) _M_index.used) {
+					conn = &connections[indices[pivot]];
+					if ((srcip != conn->srcip) || (destip != conn->destip)) {
+						break;
+					}
+				}
+
+				pos = pivot;
+				return;
+			} else {
+				i = pivot + 1;
+			}
+		} else {
+			i = pivot + 1;
+		}
+	}
+
+	pos = i;
 }

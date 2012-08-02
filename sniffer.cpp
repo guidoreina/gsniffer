@@ -33,6 +33,10 @@ sniffer::sniffer()
 	_M_idx = 0;
 
 	_M_running = false;
+
+	_M_handle_alarm = false;
+
+	_M_dump_connections = false;
 }
 
 sniffer::~sniffer()
@@ -154,6 +158,16 @@ void sniffer::start()
 
 			_M_idx = (_M_idx == _M_number_frames - 1) ? 0 : _M_idx + 1;
 			hdr = (struct tpacket_hdr*) _M_frames[_M_idx];
+		}
+
+		if (_M_handle_alarm) {
+			_M_connections.delete_expired(time(NULL));
+			_M_handle_alarm = false;
+		}
+
+		if (_M_dump_connections) {
+			_M_connections.save("connections.txt", true);
+			_M_dump_connections = false;
 		}
 
 		// Wait for new frame(s) to come.

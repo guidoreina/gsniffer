@@ -25,6 +25,12 @@ class sniffer {
 		// Stop.
 		void stop();
 
+		// On alarm.
+		void on_alarm();
+
+		// On dump connections.
+		void on_dump_connections();
+
 	protected:
 		char _M_interface[IFNAMSIZ];
 		int _M_fd;
@@ -41,6 +47,10 @@ class sniffer {
 
 		bool _M_running;
 
+		bool _M_handle_alarm;
+
+		bool _M_dump_connections;
+
 		// Process IP packet.
 		bool process_ip_packet(const unsigned char* pkt, size_t len, unsigned t);
 };
@@ -48,6 +58,16 @@ class sniffer {
 inline void sniffer::stop()
 {
 	_M_running = false;
+}
+
+inline void sniffer::on_alarm()
+{
+	_M_handle_alarm = true;
+}
+
+inline void sniffer::on_dump_connections()
+{
+	_M_dump_connections = true;
 }
 
 #endif // SNIFFER_H

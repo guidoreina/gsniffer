@@ -8,7 +8,7 @@ LIBS=
 MAKEDEPEND=${CC} -MM
 PROGRAM=sniffer
 
-OBJS =	connection_list.o analyzer.o sniffer.o main.o
+OBJS =	buffer.o connection_list.o analyzer.o sniffer.o main.o
 
 DEPS:= ${OBJS:%.o=%.d}
 
