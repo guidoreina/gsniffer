@@ -2,7 +2,10 @@
 #include <string.h>
 #include <stdio.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <poll.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -19,6 +22,9 @@ const size_t sniffer::MIN_SIZE = 1024 * 1024;
 const size_t sniffer::MAX_SIZE = 1024 * 1024 * 1024;
 const size_t sniffer::DEFAULT_SIZE = 100 * 1024 * 1024;
 
+const char* sniffer::CONNECTIONS_FILENAME = "connections.txt";
+const char* sniffer::PIPE_FILENAME = "/tmp/gsniffer.pipe";
+
 sniffer::sniffer()
 {
 	*_M_interface = 0;
@@ -32,11 +38,11 @@ sniffer::sniffer()
 
 	_M_idx = 0;
 
+	_M_pipe = -1;
+
 	_M_running = false;
 
 	_M_handle_alarm = false;
-
-	_M_dump_connections = false;
 }
 
 sniffer::~sniffer()
@@ -52,6 +58,12 @@ sniffer::~sniffer()
 	if (_M_frames) {
 		free(_M_frames);
 	}
+
+	if (_M_pipe != -1) {
+		close(_M_pipe);
+	}
+
+	unlink(PIPE_FILENAME);
 }
 
 bool sniffer::create(const char* interface, size_t size)
@@ -63,6 +75,17 @@ bool sniffer::create(const char* interface, size_t size)
 
 	size_t len;
 	if ((len = strlen(interface)) >= sizeof(_M_interface)) {
+		return false;
+	}
+
+	// Create named pipe.
+	umask(0);
+	if ((mkfifo(PIPE_FILENAME, 0666) < 0) && (errno != EEXIST)) {
+		return false;
+	}
+
+	// Open named pipe.
+	if ((_M_pipe = open(PIPE_FILENAME, O_RDWR | O_NONBLOCK)) < 0) {
 		return false;
 	}
 
@@ -140,6 +163,13 @@ void sniffer::start()
 
 	struct tpacket_hdr* hdr = (struct tpacket_hdr*) _M_frames[_M_idx];
 
+	struct pollfd fds[2];
+	fds[0].fd = _M_fd;
+	fds[0].events = POLLIN;
+
+	fds[1].fd = _M_pipe;
+	fds[1].events = POLLIN;
+
 	do {
 		// If there is a new frame...
 		while (hdr->tp_status != TP_STATUS_KERNEL) {
@@ -165,17 +195,22 @@ void sniffer::start()
 			_M_handle_alarm = false;
 		}
 
-		if (_M_dump_connections) {
-			_M_connections.save("connections.txt", true);
-			_M_dump_connections = false;
-		}
+		do {
+			fds[0].revents = 0;
+			fds[1].revents = 0;
 
-		// Wait for new frame(s) to come.
-		struct pollfd fd;
-		fd.fd = _M_fd;
-		fd.events = POLLIN;
-		fd.revents = 0;
-		poll(&fd, 1, -1);
+			poll(fds, 2, -1);
+
+			// If we have received data from the pipe...
+			if (fds[1].revents & POLLIN) {
+				char c;
+				while (read(_M_pipe, &c, 1) == 1) {
+					if (c == 1) {
+						_M_connections.save(CONNECTIONS_FILENAME, true);
+					}
+				}
+			}
+		} while ((_M_running) && (fds[0].revents == 0));
 	} while (_M_running);
 
 #if DEBUG

@@ -6,7 +6,6 @@
 
 static void signal_handler(int nsignal);
 static void handle_alarm(int nsignal);
-static void handle_sigusr1(int nsignal);
 
 sniffer sniffer;
 
@@ -31,9 +30,6 @@ int main(int argc, char** argv)
 
 	act.sa_handler = handle_alarm;
 	sigaction(SIGALRM, &act, NULL);
-
-	act.sa_handler = handle_sigusr1;
-	sigaction(SIGUSR1, &act, NULL);
 
 	struct itimerval value;
 	value.it_interval.tv_sec = 5;
@@ -60,9 +56,4 @@ void signal_handler(int nsignal)
 void handle_alarm(int nsignal)
 {
 	sniffer.on_alarm();
-}
-
-void handle_sigusr1(int nsignal)
-{
-	sniffer.on_dump_connections();
 }
