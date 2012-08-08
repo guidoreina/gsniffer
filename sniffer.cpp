@@ -85,7 +85,7 @@ bool sniffer::create(const char* interface, size_t size)
 	}
 
 	// Open named pipe.
-	if ((_M_pipe = open(PIPE_FILENAME, O_RDWR | O_NONBLOCK)) < 0) {
+	if ((_M_pipe = open(PIPE_FILENAME, O_RDWR)) < 0) {
 		return false;
 	}
 
@@ -204,7 +204,14 @@ void sniffer::start()
 			// If we have received data from the pipe...
 			if (fds[1].revents & POLLIN) {
 				char c;
-				while (read(_M_pipe, &c, 1) == 1) {
+				ssize_t ret;
+				if ((ret = read(_M_pipe, &c, 1)) == 0) {
+					close(_M_pipe);
+
+					if ((_M_pipe = open(PIPE_FILENAME, O_RDWR)) < 0) {
+						_M_running = false;
+					}
+				} else if (ret == 1) {
 					if (c == 1) {
 						_M_connections.save(CONNECTIONS_FILENAME, true);
 					}
