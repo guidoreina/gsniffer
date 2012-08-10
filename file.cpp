@@ -58,7 +58,7 @@ ssize_t file::pread(void* buf, size_t count, off_t offset)
 		}
 	} while (true);
 #else
-	if (seek(_M_fd, offset, SEEK_SET) != offset) {
+	if (seek(offset, SEEK_SET) != offset) {
 		return -1;
 	}
 
@@ -119,7 +119,7 @@ bool file::pwrite(const void* buf, size_t count, off_t offset)
 
 	return true;
 #else
-	if (seek(_M_fd, offset, SEEK_SET) != offset) {
+	if (seek(offset, SEEK_SET) != offset) {
 		return false;
 	}
 

@@ -1,5 +1,6 @@
 CC=g++
 CXXFLAGS=-g -Wall -pedantic -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 -Wno-format -Wno-long-long -I.
+CXXFLAGS+=-DHAVE_PREAD
 # CXXFLAGS+=-DDEBUG
 
 LDFLAGS=
@@ -8,7 +9,7 @@ LIBS=
 MAKEDEPEND=${CC} -MM
 PROGRAM=sniffer
 
-OBJS =	buffer.o connection_list.o analyzer.o sniffer.o main.o
+OBJS =	buffer.o file.o connection_list.o analyzer.o sniffer.o main.o
 
 DEPS:= ${OBJS:%.o=%.d}
 
