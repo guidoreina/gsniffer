@@ -3,6 +3,7 @@
 
 #include <net/if.h>
 #include "connection_list.h"
+#include "http_logger.h"
 
 class sniffer {
 	public:
@@ -17,7 +18,7 @@ class sniffer {
 		~sniffer();
 
 		// Create.
-		bool create(const char* interface, size_t size = DEFAULT_SIZE);
+		bool create(const char* interface, const char* dir, size_t size = DEFAULT_SIZE);
 
 		// Start.
 		void start();
@@ -27,6 +28,9 @@ class sniffer {
 
 		// On alarm.
 		void on_alarm();
+
+		// Get HTTP logger.
+		http_logger* get_http_logger();
 
 	protected:
 		static const char* CONNECTIONS_FILENAME;
@@ -51,6 +55,8 @@ class sniffer {
 
 		bool _M_handle_alarm;
 
+		http_logger _M_http_logger;
+
 		// Process IP packet.
 		bool process_ip_packet(const unsigned char* pkt, size_t len, unsigned t);
 };
@@ -63,6 +69,11 @@ inline void sniffer::stop()
 inline void sniffer::on_alarm()
 {
 	_M_handle_alarm = true;
+}
+
+inline http_logger* sniffer::get_http_logger()
+{
+	return &_M_http_logger;
 }
 
 #endif // SNIFFER_H

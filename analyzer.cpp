@@ -1,22 +1,24 @@
 #include <stdlib.h>
 #include <string.h>
-#include <stdio.h>
 #include <arpa/inet.h>
 #include "analyzer.h"
+#include "sniffer.h"
 
-bool analyzer::process(const struct tcphdr* tcp_header, const unsigned char* payload, size_t len)
+extern sniffer sniffer;
+
+bool analyzer::process(time_t t, const struct iphdr* ip_header, const struct tcphdr* tcp_header, const unsigned char* payload, size_t len)
 {
 	unsigned short srcport = ntohs(tcp_header->source);
 	unsigned short destport = ntohs(tcp_header->dest);
 
-	if ((srcport == 80) || (destport == 80)) {
-		return process_http(payload, len);
+	if ((srcport == 80) || (destport == 80) || (srcport == 8080) || (destport == 8080) || (srcport == 8000) || (destport == 8000)) {
+		return process_http(t, ip_header, payload, len);
 	}
 
 	return true;
 }
 
-bool analyzer::process_http(const unsigned char* payload, size_t len)
+bool analyzer::process_http(time_t t, const struct iphdr* ip_header, const unsigned char* payload, size_t len)
 {
 	const unsigned char* ptr = payload;
 	const unsigned char* end = payload + len;
@@ -73,14 +75,13 @@ bool analyzer::process_http(const unsigned char* payload, size_t len)
 				if (c > ' ') {
 					pathlen++;
 				} else if ((c == ' ') || (c == '\t') || (c == '\r') || (c == '\n')) {
+					if ((pathlen > 7) && (strncasecmp(path, "http://", 7) == 0)) {
+						return sniffer.get_http_logger()->log(t, ip_header->saddr, method, methodlen, path, pathlen);
+					}
+
 					size_t left = len - (ptr - payload);
 					if ((ptr = (const unsigned char*) memmem(ptr, left, "Host:", 5)) == NULL) {
-						if (*path == '/') {
-							// Host header might come in the next packet.
-							return true;
-						}
-
-						printf("%.*s %.*s\n", methodlen, method, pathlen, path);
+						// Host header might come in the next packet.
 						return true;
 					} else {
 						if ((ptr += 5) == end) {
@@ -114,8 +115,7 @@ bool analyzer::process_http(const unsigned char* payload, size_t len)
 				if (c > ' ') {
 					hostlen++;
 				} else if ((c == '\r') || (c == '\n') || (c == ' ') || (c == '\t')) {
-					printf("%.*s http://%.*s%.*s\n", methodlen, method, hostlen, host, pathlen, path);
-					return true;
+					return sniffer.get_http_logger()->log(t, ip_header->saddr, method, methodlen, host, hostlen, path, pathlen);
 				} else {
 					// Ignore invalid request.
 					return true;

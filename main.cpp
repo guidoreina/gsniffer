@@ -11,12 +11,12 @@ sniffer sniffer;
 
 int main(int argc, char** argv)
 {
-	if (argc != 2) {
-		fprintf(stderr, "Usage: %s <interface>\n", argv[0]);
+	if (argc != 3) {
+		fprintf(stderr, "Usage: %s <interface> <log-directory>\n", argv[0]);
 		return -1;
 	}
 
-	if (!sniffer.create(argv[1], 32 * 1024 * 1024)) {
+	if (!sniffer.create(argv[1], argv[2], 32 * 1024 * 1024)) {
 		fprintf(stderr, "Couldn't create sniffer.\n");
 		return -1;
 	}

@@ -66,7 +66,7 @@ sniffer::~sniffer()
 	unlink(PIPE_FILENAME);
 }
 
-bool sniffer::create(const char* interface, size_t size)
+bool sniffer::create(const char* interface, const char* dir, size_t size)
 {
 	// Sanity check.
 	if ((size < MIN_SIZE) || (size > MAX_SIZE)) {
@@ -75,6 +75,11 @@ bool sniffer::create(const char* interface, size_t size)
 
 	size_t len;
 	if ((len = strlen(interface)) >= sizeof(_M_interface)) {
+		return false;
+	}
+
+	// Create HTTP logger.
+	if (!_M_http_logger.create(dir)) {
 		return false;
 	}
 
@@ -275,7 +280,7 @@ bool sniffer::process_ip_packet(const unsigned char* pkt, size_t len, unsigned t
 			return true;
 		}
 
-		return analyzer::process(tcp_header, pkt + iphdrlen + tcphdrlen, payload);
+		return analyzer::process(t, ip_header, tcp_header, pkt + iphdrlen + tcphdrlen, payload);
 	} else if (ip_header->protocol == 0x11) {
 		// UDP.
 		if (len < iphdrlen + sizeof(struct udphdr)) {
