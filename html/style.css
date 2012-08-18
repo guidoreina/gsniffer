@@ -1,0 +1,63 @@
+body {
+	font-family: "Courier New"
+}
+
+table.connection_table, th, td {
+	margin-left: auto;
+	margin-right: auto;
+	font-size: small;
+	border: 1px solid black
+}
+
+td.total_by_srcip {
+	background-color: #BBBBBB;
+	text-align: right
+}
+
+td.srcip0 {
+	background-color: #00AA00
+}
+
+td.srcip1 {
+	background-color: #00FF00
+}
+
+td.srcip2 {
+	background-color: #00CCFF
+}
+
+td.srcip3 {
+	background-color: #FFDDAA
+}
+
+td.destip0 {
+	background-color: #AAAAAA
+}
+
+td.destip1 {
+	background-color: #BBBBBB
+}
+
+td.destip2 {
+	background-color: #CCCCCC
+}
+
+td.destip3 {
+	background-color: #DDDDDD
+}
+
+td.no_connections {
+	text-align: center
+}
+
+textarea.logarea {
+	width: 1000px;
+	height: 400px;
+	display: block;
+	margin-left: auto;
+	margin-right: auto;
+}
+
+p.last_update {
+	text-align: center;
+}
