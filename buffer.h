@@ -7,10 +7,10 @@
 
 class buffer {
 	public:
-		static const size_t DEFAULT_BUFFER_INCREMENT;
+		static const size_t DEFAULT_INITIAL_SIZE;
 
 		// Constructor.
-		buffer(size_t buffer_increment = DEFAULT_BUFFER_INCREMENT);
+		buffer(size_t initial_size = DEFAULT_INITIAL_SIZE);
 
 		// Destructor.
 		virtual ~buffer();
@@ -38,8 +38,8 @@ class buffer {
 		// Increment count.
 		void increment_count(size_t inc);
 
-		// Set buffer increment.
-		void set_buffer_increment(size_t buffer_increment);
+		// Set initial size.
+		void set_initial_size(size_t initial_size);
 
 		// Allocate memory.
 		bool allocate(size_t size);
@@ -61,16 +61,16 @@ class buffer {
 		size_t _M_size;
 		size_t _M_used;
 
-		size_t _M_buffer_increment;
+		size_t _M_initial_size;
 };
 
-inline buffer::buffer(size_t buffer_increment)
+inline buffer::buffer(size_t initial_size)
 {
 	_M_data = NULL;
 	_M_size = 0;
 	_M_used = 0;
 
-	set_buffer_increment(buffer_increment);
+	set_initial_size(initial_size);
 }
 
 inline buffer::~buffer()
@@ -124,12 +124,12 @@ inline void buffer::increment_count(size_t inc)
 	_M_used += inc;
 }
 
-inline void buffer::set_buffer_increment(size_t buffer_increment)
+inline void buffer::set_initial_size(size_t initial_size)
 {
-	if (buffer_increment == 0) {
-		_M_buffer_increment = DEFAULT_BUFFER_INCREMENT;
+	if (initial_size == 0) {
+		_M_initial_size = DEFAULT_INITIAL_SIZE;
 	} else {
-		_M_buffer_increment = buffer_increment;
+		_M_initial_size = initial_size;
 	}
 }
 
