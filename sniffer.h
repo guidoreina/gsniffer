@@ -3,6 +3,7 @@
 
 #include <net/if.h>
 #include "connection_list.h"
+#include "packet_processor.h"
 #include "http_logger.h"
 
 class sniffer {
@@ -55,6 +56,7 @@ class sniffer {
 
 		bool _M_handle_alarm;
 
+		packet_processor _M_packet_processor;
 		http_logger _M_http_logger;
 
 		// Process IP packet.

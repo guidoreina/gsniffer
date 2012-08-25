@@ -9,7 +9,7 @@ LIBS=
 MAKEDEPEND=${CC} -MM
 PROGRAM=sniffer
 
-OBJS =	buffer.o file.o http_logger.o connection_list.o analyzer.o sniffer.o main.o
+OBJS =	buffer.o file.o http_logger.o connection.o connection_list.o http_analyzer.o packet_processor.o sniffer.o main.o
 
 DEPS:= ${OBJS:%.o=%.d}
 

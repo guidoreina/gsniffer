@@ -1,7 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
 #include "http_logger.h"
@@ -45,7 +44,7 @@ bool http_logger::create(const char* dir)
 	return true;
 }
 
-bool http_logger::log(time_t t, u_int32_t srcip, const char* method, size_t methodlen, const char* host, size_t hostlen, const char* url, size_t urllen)
+bool http_logger::log(time_t t, const ip_address& srcip, const char* method, size_t methodlen, const char* host, size_t hostlen, const char* url, size_t urllen)
 {
 	struct tm stm;
 	localtime_r(&t, &stm);
@@ -57,7 +56,7 @@ bool http_logger::log(time_t t, u_int32_t srcip, const char* method, size_t meth
 
 	memcpy(&_M_time_prev_log, &stm, sizeof(struct tm));
 
-	const unsigned char* saddr = (const unsigned char*) &srcip;
+	const unsigned char* saddr = (const unsigned char*) &srcip.ipv4;
 
 	struct iovec iov[6];
 	char buf[64];

@@ -1,11 +1,9 @@
 #ifndef CONNECTION_LIST_H
 #define CONNECTION_LIST_H
 
-#include <time.h>
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
-#include "ip_address.h"
-#include "buffer.h"
+#include "connection.h"
 
 class connection_list {
 	public:
@@ -24,7 +22,7 @@ class connection_list {
 		bool create();
 
 		// Add packet.
-		bool add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, bool& first_payload);
+		bool add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn);
 
 		// Delete expired connections.
 		void delete_expired(time_t now);
@@ -42,33 +40,19 @@ class connection_list {
 		bool serialize(bool ordered, buffer& buf);
 
 	protected:
-		static const size_t CONNECTIONS_ALLOC;
+		static const size_t NODES_ALLOC;
 		static const size_t INDICES_ALLOC;
 		static const size_t IP_FRAGMENTS_ALLOC;
 
-		struct connection {
-			ip_address srcip;
-			ip_address destip;
-			unsigned short srcport;
-			unsigned short destport;
-
-			time_t creation;
-			time_t timestamp; // Time last activity.
-
-			off_t uploaded;
-			off_t downloaded;
-
-			unsigned char state:4;
-			unsigned char direction:1; // 0: Outgoing, 1: Incoming.
+		struct node {
+			connection conn;
 
 			int prev;
 			int next;
-
-			bool serialize(buffer& buf) const;
 		};
 
-		struct connections {
-			connection* connections;
+		struct nodes {
+			node* nodes;
 			size_t size;
 			size_t used;
 		};
@@ -96,19 +80,19 @@ class connection_list {
 		// Indexed by source port.
 		ip_fragments* _M_fragments;
 
-		connections _M_connections;
+		nodes _M_nodes;
 
-		// Connections are added to the head.
+		// Nodes are added to the head.
 		int _M_head;
 		int _M_tail;
 
-		int _M_free_connection;
+		int _M_free_node;
 
 		index _M_index;
 		buffer _M_buf;
 
-		// Allocate connection.
-		connection* allocate_connection();
+		// Allocate node.
+		node* allocate_node();
 
 		// Allocate index.
 		bool allocate_index(ip_fragment* fragment);
@@ -119,9 +103,9 @@ class connection_list {
 		// Allocate indices.
 		bool allocate_indices();
 
-		// Delete connection.
-		void delete_connection(unsigned short srcport, size_t pos, size_t index);
-		bool delete_connection(unsigned connidx);
+		// Delete node.
+		void delete_node(unsigned short srcport, size_t pos, size_t index);
+		bool delete_node(unsigned idx);
 
 		// Search IP fragment.
 		ip_fragment* search(const ip_fragments* fragments, const ip_address& addr, size_t& pos);
@@ -143,15 +127,7 @@ inline connection_list::~connection_list()
 
 inline size_t connection_list::get_number_connections() const
 {
-	return _M_connections.used;
-}
-
-inline bool connection_list::connection::serialize(buffer& buf) const
-{
-	const unsigned char* src = (const unsigned char*) &srcip;
-	const unsigned char* dest = (const unsigned char*) &destip;
-
-	return buf.format("%u.%u.%u.%u:%u\t%s\t%u.%u.%u.%u:%u\t%ld\t%ld\t%lld\t%lld\n", src[0], src[1], src[2], src[3], srcport, (direction == 0) ? "->" : "<-", dest[0], dest[1], dest[2], dest[3], destport, creation, timestamp, uploaded, downloaded);
+	return _M_nodes.used;
 }
 
 #endif // CONNECTION_LIST_H

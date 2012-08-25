@@ -16,7 +16,6 @@
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
 #include "sniffer.h"
-#include "analyzer.h"
 
 const size_t sniffer::MIN_SIZE = 1024 * 1024;
 const size_t sniffer::MAX_SIZE = 1024 * 1024 * 1024;
@@ -218,7 +217,9 @@ void sniffer::start()
 					}
 				} else if (ret == 1) {
 					if (c == 1) {
-						_M_connections.save(CONNECTIONS_FILENAME, true);
+						if (!_M_connections.save(CONNECTIONS_FILENAME, true)) {
+							_M_running = false;
+						}
 					}
 				}
 			}
@@ -271,16 +272,16 @@ bool sniffer::process_ip_packet(const unsigned char* pkt, size_t len, unsigned t
 		printf("[TCP] %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u\n", saddr[0], saddr[1], saddr[2], saddr[3], srcport, daddr[0], daddr[1], daddr[2], daddr[3], destport);
 #endif // DEBUG
 
-		bool first_payload;
-		if (!_M_connections.add(ip_header, tcp_header, payload, t, first_payload)) {
+		connection* conn;
+		if (!_M_connections.add(ip_header, tcp_header, payload, t, conn)) {
 			return false;
 		}
 
-		if (!first_payload) {
+		if (!conn) {
 			return true;
 		}
 
-		return analyzer::process(t, ip_header, tcp_header, pkt + iphdrlen + tcphdrlen, payload);
+		return _M_packet_processor.process(t, conn, pkt + iphdrlen + tcphdrlen, payload);
 	} else if (ip_header->protocol == 0x11) {
 		// UDP.
 		if (len < iphdrlen + sizeof(struct udphdr)) {

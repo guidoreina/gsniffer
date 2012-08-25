@@ -9,7 +9,7 @@
 #include "connection_list.h"
 
 const time_t connection_list::EXPIRATION_TIMEOUT = 2 * 60 * 60;
-const size_t connection_list::CONNECTIONS_ALLOC = 1024;
+const size_t connection_list::NODES_ALLOC = 1024;
 const size_t connection_list::INDICES_ALLOC = 128;
 const size_t connection_list::IP_FRAGMENTS_ALLOC = 32;
 
@@ -17,14 +17,14 @@ connection_list::connection_list() : _M_buf(64 * 1024)
 {
 	_M_fragments = NULL;
 
-	_M_connections.connections = NULL;
-	_M_connections.size = 0;
-	_M_connections.used = 0;
+	_M_nodes.nodes = NULL;
+	_M_nodes.size = 0;
+	_M_nodes.used = 0;
 
 	_M_head = -1;
 	_M_tail = -1;
 
-	_M_free_connection = -1;
+	_M_free_node = -1;
 
 	_M_index.indices = NULL;
 	_M_index.size = 0;
@@ -52,18 +52,28 @@ void connection_list::free()
 		_M_fragments = NULL;
 	}
 
-	if (_M_connections.connections) {
-		::free(_M_connections.connections);
-		_M_connections.connections = NULL;
+	if (_M_nodes.nodes) {
+		for (size_t i = 0; i < _M_nodes.used; i++) {
+			if (_M_nodes.nodes[i].conn.in) {
+				delete _M_nodes.nodes[i].conn.in;
+			}
+
+			if (_M_nodes.nodes[i].conn.out) {
+				delete _M_nodes.nodes[i].conn.out;
+			}
+		}
+
+		::free(_M_nodes.nodes);
+		_M_nodes.nodes = NULL;
 	}
 
-	_M_connections.size = 0;
-	_M_connections.used = 0;
+	_M_nodes.size = 0;
+	_M_nodes.used = 0;
 
 	_M_head = -1;
 	_M_tail = -1;
 
-	_M_free_connection = -1;
+	_M_free_node = -1;
 
 	if (_M_index.indices) {
 		::free(_M_index.indices);
@@ -83,7 +93,7 @@ bool connection_list::create()
 	return true;
 }
 
-bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, bool& first_payload)
+bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn)
 {
 	ip_address addresses[2];
 	unsigned short ports[2];
@@ -126,7 +136,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		// If not a SYN + ACK...
 		if ((!tcp_header->syn) || (!tcp_header->ack)) {
 			// Ignore packet.
-			first_payload = false;
+			conn = NULL;
 			return true;
 		}
 
@@ -154,12 +164,12 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		// If not a SYN + ACK...
 		if ((!tcp_header->syn) || (!tcp_header->ack)) {
 			// Ignore packet.
-			first_payload = false;
+			conn = NULL;
 			return true;
 		}
 
-		connection* conn;
-		if ((!allocate_index(fragment)) || ((conn = allocate_connection()) == NULL)) {
+		node* n;
+		if ((!allocate_index(fragment)) || ((n = allocate_node()) == NULL)) {
 			return false;
 		}
 
@@ -170,6 +180,8 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		fragment->indices[index] = _M_head;
 
 		// Initialize connection.
+		conn = &n->conn;
+
 		conn->srcip = addresses[0];
 		conn->destip = addresses[1];
 
@@ -179,7 +191,10 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		conn->creation = t;
 		conn->timestamp = t;
 
+		conn->first_upload = (transferred[0] > 0);
 		conn->uploaded = transferred[0];
+
+		conn->first_download = (transferred[1] > 0);
 		conn->downloaded = transferred[1];
 
 		conn->state = 0;
@@ -187,26 +202,25 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 
 		fragment->used++;
 
-		first_payload = (payload > 0);
-
 		return true;
 	}
 
 	// If the connection has to be deleted...
 	if ((tcp_header->rst) || (tcp_header->fin)) {
-		delete_connection(ports[0], pos, index);
-		first_payload = false;
+		delete_node(ports[0], pos, index);
 
+		conn = NULL;
 		return true;
 	}
 
-	connection* conn = &_M_connections.connections[fragment->indices[index]];
+	conn = &_M_nodes.nodes[fragment->indices[index]].conn;
 
 	conn->timestamp = t;
 
-	first_payload = (payload > 0) && ((conn->uploaded == 0) && (conn->downloaded == 0));
-
+	conn->first_upload = (conn->uploaded == 0) && (transferred[0] > 0);
 	conn->uploaded += transferred[0];
+
+	conn->first_download = (conn->downloaded == 0) && (transferred[1] > 0);
 	conn->downloaded += transferred[1];
 
 	return true;
@@ -214,10 +228,10 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 
 void connection_list::delete_expired(time_t now)
 {
-	connection* connections = _M_connections.connections;
+	node* nodes = _M_nodes.nodes;
 
 	while (_M_tail != -1) {
-		connection* conn = &connections[_M_tail];
+		connection* conn = &nodes[_M_tail].conn;
 
 		if (conn->timestamp + EXPIRATION_TIMEOUT > now) {
 			return;
@@ -230,7 +244,7 @@ void connection_list::delete_expired(time_t now)
 		printf("Deleting expired connection: %u.%u.%u.%u:%u %s %u.%u.%u.%u:%u, timestamp: %ld.\n", srcip[0], srcip[1], srcip[2], srcip[3], conn->srcport, (conn->direction == 0) ? "->" : "<-", destip[0], destip[1], destip[2], destip[3], conn->destport, conn->timestamp);
 #endif // DEBUG
 
-		delete_connection(_M_tail);
+		delete_node(_M_tail);
 	}
 }
 
@@ -275,39 +289,30 @@ bool connection_list::save(const char* filename, bool ordered)
 
 void connection_list::print() const
 {
-	printf("# of connections: %u:\n", _M_connections.used);
+	printf("# of connections: %u:\n", _M_nodes.used);
 
-	const connection* connections = _M_connections.connections;
+	const node* nodes = _M_nodes.nodes;
 
 	int i = _M_head;
 	while (i != -1) {
-		const connection* conn = &connections[i];
+		nodes[i].conn.print();
 
-		const unsigned char* saddr = (const unsigned char*) &conn->srcip;
-		const unsigned char* daddr = (const unsigned char*) &conn->destip;
-
-		printf("\t[%s] %u.%u.%u.%u:%u -> %u.%u.%u.%u:%u:\n", (conn->direction == 0) ? "OUT" : "IN", saddr[0], saddr[1], saddr[2], saddr[3], conn->srcport, daddr[0], daddr[1], daddr[2], daddr[3], conn->destport);
-		printf("\t\tCreation: %ld\n", conn->creation);
-		printf("\t\tLast activity: %ld\n", conn->timestamp);
-		printf("\t\tUploaded: %lld\n", conn->uploaded);
-		printf("\t\tDownloaded: %lld\n", conn->downloaded);
-
-		i = conn->next;
+		i = nodes[i].next;
 	}
 }
 
 bool connection_list::serialize(bool ordered, buffer& buf)
 {
-	const connection* connections = _M_connections.connections;
+	const node* nodes = _M_nodes.nodes;
 
 	if (!ordered) {
 		int i = _M_head;
 		while (i != -1) {
-			if (!connections[i].serialize(buf)) {
+			if (!nodes[i].conn.serialize(buf)) {
 				return false;
 			}
 
-			i = connections[i].next;
+			i = nodes[i].next;
 		}
 	} else {
 		if (!build_index()) {
@@ -318,7 +323,7 @@ bool connection_list::serialize(bool ordered, buffer& buf)
 		size_t used = _M_index.used;
 
 		for (size_t i = 0; i < used; i++) {
-			if (!connections[indices[i]].serialize(buf)) {
+			if (!nodes[indices[i]].conn.serialize(buf)) {
 				return false;
 			}
 		}
@@ -327,55 +332,61 @@ bool connection_list::serialize(bool ordered, buffer& buf)
 	return true;
 }
 
-connection_list::connection* connection_list::allocate_connection()
+connection_list::node* connection_list::allocate_node()
 {
-	// If we have to allocate a new connection...
-	if (_M_free_connection == -1) {
-		size_t size = (_M_connections.size == 0) ? CONNECTIONS_ALLOC : _M_connections.size * 2;
+	// If we have to allocate a new node...
+	if (_M_free_node == -1) {
+		size_t size = (_M_nodes.size == 0) ? NODES_ALLOC : _M_nodes.size * 2;
 
-		connection* connections;
-		if ((connections = (struct connection*) realloc(_M_connections.connections, size * sizeof(struct connection))) == NULL) {
+		node* nodes;
+		if ((nodes = (struct node*) realloc(_M_nodes.nodes, size * sizeof(struct node))) == NULL) {
 			return NULL;
 		}
 
 		size_t i;
-		for (i = _M_connections.size; i < size - 1; i++) {
-			connections[i].next = i + 1;
+		for (i = _M_nodes.size; i < size - 1; i++) {
+			nodes[i].conn.in = NULL;
+			nodes[i].conn.out = NULL;
+
+			nodes[i].next = i + 1;
 		}
 
-		connections[i].next = -1;
+		nodes[i].conn.in = NULL;
+		nodes[i].conn.out = NULL;
 
-		_M_free_connection = _M_connections.size;
+		nodes[i].next = -1;
 
-		_M_connections.connections = connections;
-		_M_connections.size = size;
+		_M_free_node = _M_nodes.size;
+
+		_M_nodes.nodes = nodes;
+		_M_nodes.size = size;
 	}
 
-	connection* conn = &_M_connections.connections[_M_free_connection];
+	node* n = &_M_nodes.nodes[_M_free_node];
 
-	// Save next free connection.
-	int next = conn->next;
+	// Save next free node.
+	int next = n->next;
 
-	conn->prev = -1;
-	conn->next = _M_head;
+	n->prev = -1;
+	n->next = _M_head;
 
-	// If this is not the first connection...
+	// If this is not the first node...
 	if (_M_head != -1) {
-		_M_connections.connections[_M_head].prev = _M_free_connection;
+		_M_nodes.nodes[_M_head].prev = _M_free_node;
 	} else {
-		_M_tail = _M_free_connection;
+		_M_tail = _M_free_node;
 	}
 
-	_M_head = _M_free_connection;
-	_M_free_connection = next;
+	_M_head = _M_free_node;
+	_M_free_node = next;
 
-	_M_connections.used++;
+	_M_nodes.used++;
 
 #if DEBUG
-	printf("# of connections: %u.\n", _M_connections.used);
+	printf("# of connections: %u.\n", _M_nodes.used);
 #endif
 
-	return conn;
+	return n;
 }
 
 bool connection_list::allocate_index(ip_fragment* fragment)
@@ -414,24 +425,24 @@ bool connection_list::allocate_ip_fragment(ip_fragments* fragments)
 
 bool connection_list::allocate_indices()
 {
-	if (_M_index.size < _M_connections.used) {
+	if (_M_index.size < _M_nodes.used) {
 		unsigned* indices;
-		if ((indices = (unsigned*) realloc(_M_index.indices, _M_connections.used * sizeof(unsigned))) == NULL) {
+		if ((indices = (unsigned*) realloc(_M_index.indices, _M_nodes.used * sizeof(unsigned))) == NULL) {
 			return false;
 		}
 
 		_M_index.indices = indices;
-		_M_index.size = _M_connections.used;
+		_M_index.size = _M_nodes.used;
 	}
 
 	return true;
 }
 
-void connection_list::delete_connection(unsigned short srcport, size_t pos, size_t index)
+void connection_list::delete_node(unsigned short srcport, size_t pos, size_t index)
 {
 	ip_fragments* fragments = &_M_fragments[srcport];
 	ip_fragment* fragment = &fragments->fragments[pos];
-	unsigned connidx = fragment->indices[index];
+	unsigned idx = fragment->indices[index];
 
 	// Remove index.
 	fragment->used--;
@@ -461,37 +472,39 @@ void connection_list::delete_connection(unsigned short srcport, size_t pos, size
 		}
 	}
 
-	// Add connection to the free list.
-	connection* conn = &_M_connections.connections[connidx];
-	if (conn->prev != -1) {
-		_M_connections.connections[conn->prev].next = conn->next;
+	// Add node to the free list.
+	node* n = &_M_nodes.nodes[idx];
+	if (n->prev != -1) {
+		_M_nodes.nodes[n->prev].next = n->next;
 	}
 
-	if (conn->next != -1) {
-		_M_connections.connections[conn->next].prev = conn->prev;
+	if (n->next != -1) {
+		_M_nodes.nodes[n->next].prev = n->prev;
 	}
 
-	if ((int) connidx == _M_head) {
-		_M_head = conn->next;
+	if ((int) idx == _M_head) {
+		_M_head = n->next;
 	}
 
-	if ((int) connidx == _M_tail) {
-		_M_tail = conn->prev;
+	if ((int) idx == _M_tail) {
+		_M_tail = n->prev;
 	}
 
-	conn->next = _M_free_connection;
-	_M_free_connection = connidx;
+	n->conn.reset();
 
-	_M_connections.used--;
+	n->next = _M_free_node;
+	_M_free_node = idx;
+
+	_M_nodes.used--;
 
 #if DEBUG
-	printf("# of connections: %u.\n", _M_connections.used);
+	printf("# of connections: %u.\n", _M_nodes.used);
 #endif
 }
 
-bool connection_list::delete_connection(unsigned connidx)
+bool connection_list::delete_node(unsigned idx)
 {
-	connection* conn = &_M_connections.connections[connidx];
+	connection* conn = &_M_nodes.nodes[idx].conn;
 
 	// Search IP fragment.
 	ip_fragment* fragment;
@@ -506,7 +519,7 @@ bool connection_list::delete_connection(unsigned connidx)
 		return false;
 	}
 
-	delete_connection(conn->srcport, pos, index);
+	delete_node(conn->srcport, pos, index);
 
 	return true;
 }
@@ -540,7 +553,7 @@ connection_list::ip_fragment* connection_list::search(const ip_fragments* fragme
 
 bool connection_list::search(const ip_fragment* fragment, const ip_address& srcip, unsigned short srcport, const ip_address& destip, unsigned short destport, size_t& pos) const
 {
-	const connection* connections = _M_connections.connections;
+	const node* nodes = _M_nodes.nodes;
 	const unsigned* indices = fragment->indices;
 
 	int i = 0;
@@ -548,7 +561,7 @@ bool connection_list::search(const ip_fragment* fragment, const ip_address& srci
 
 	while (i <= j) {
 		int pivot = (i + j) / 2;
-		const connection* conn = &connections[indices[pivot]];
+		const connection* conn = &nodes[indices[pivot]].conn;
 
 		if (srcip < conn->srcip) {
 			j = pivot - 1;
@@ -589,17 +602,17 @@ bool connection_list::build_index()
 		return false;
 	}
 
-	const connection* connections = _M_connections.connections;
+	const node* nodes = _M_nodes.nodes;
 	unsigned* indices = _M_index.indices;
 
 	_M_index.used = 0;
 
 	int idx = _M_head;
 	while (idx != -1) {
-		const connection* conn = &connections[idx];
+		const node* n = &nodes[idx];
 
 		size_t pos;
-		search(conn->srcip, conn->destip, pos);
+		search(n->conn.srcip, n->conn.destip, pos);
 
 		if (pos < _M_index.used) {
 			memmove(&indices[pos + 1], &indices[pos], (_M_index.used - pos) * sizeof(unsigned));
@@ -609,7 +622,7 @@ bool connection_list::build_index()
 
 		_M_index.used++;
 
-		idx = conn->next;
+		idx = n->next;
 	}
 
 	return true;
@@ -617,7 +630,7 @@ bool connection_list::build_index()
 
 void connection_list::search(const ip_address& srcip, const ip_address& destip, size_t& pos) const
 {
-	const connection* connections = _M_connections.connections;
+	const node* nodes = _M_nodes.nodes;
 	const unsigned* indices = _M_index.indices;
 
 	int i = 0;
@@ -625,7 +638,7 @@ void connection_list::search(const ip_address& srcip, const ip_address& destip, 
 
 	while (i <= j) {
 		int pivot = (i + j) / 2;
-		const connection* conn = &connections[indices[pivot]];
+		const connection* conn = &nodes[indices[pivot]].conn;
 
 		int ret = ip_address::compare(srcip, conn->srcip);
 		if (ret < 0) {
@@ -636,7 +649,7 @@ void connection_list::search(const ip_address& srcip, const ip_address& destip, 
 				j = pivot - 1;
 			} else if (ret == 0) {
 				while (++pivot < (int) _M_index.used) {
-					conn = &connections[indices[pivot]];
+					conn = &nodes[indices[pivot]].conn;
 					if ((srcip != conn->srcip) || (destip != conn->destip)) {
 						break;
 					}
