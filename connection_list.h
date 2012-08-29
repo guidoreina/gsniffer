@@ -22,7 +22,7 @@ class connection_list {
 		bool create();
 
 		// Add packet.
-		bool add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn);
+		bool add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn, unsigned char& direction);
 
 		// Delete expired connections.
 		void delete_expired(time_t now);

@@ -6,7 +6,7 @@
 class packet_processor {
 	public:
 		// Process packet.
-		bool process(time_t t, const connection* conn, const unsigned char* payload, size_t len);
+		bool process(time_t t, connection* conn, const packet& pkt);
 
 	protected:
 		http_analyzer _M_http_analyzer;

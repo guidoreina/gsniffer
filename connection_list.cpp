@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <limits.h>
 #include "connection_list.h"
+#include "packet.h"
 
 const time_t connection_list::EXPIRATION_TIMEOUT = 2 * 60 * 60;
 const size_t connection_list::NODES_ALLOC = 1024;
@@ -53,7 +54,7 @@ void connection_list::free()
 	}
 
 	if (_M_nodes.nodes) {
-		for (size_t i = 0; i < _M_nodes.used; i++) {
+		for (size_t i = 0; i < _M_nodes.size; i++) {
 			if (_M_nodes.nodes[i].conn.in) {
 				delete _M_nodes.nodes[i].conn.in;
 			}
@@ -93,12 +94,11 @@ bool connection_list::create()
 	return true;
 }
 
-bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn)
+bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn, unsigned char& direction)
 {
 	ip_address addresses[2];
 	unsigned short ports[2];
 	size_t transferred[2];
-	unsigned char direction;
 
 	unsigned short srcport = ntohs(tcp_header->source);
 	unsigned short destport = ntohs(tcp_header->dest);
@@ -113,7 +113,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		transferred[0] = payload;
 		transferred[1] = 0;
 
-		direction = 0;
+		direction = OUTGOING_PACKET;
 	} else {
 		addresses[0].ipv4 = ip_header->daddr;
 		addresses[1].ipv4 = ip_header->saddr;
@@ -124,7 +124,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		transferred[0] = 0;
 		transferred[1] = payload;
 
-		direction = 1;
+		direction = INCOMING_PACKET;
 	}
 
 	ip_fragments* fragments = &_M_fragments[ports[0]];
@@ -182,6 +182,8 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		// Initialize connection.
 		conn = &n->conn;
 
+		conn->init();
+
 		conn->srcip = addresses[0];
 		conn->destip = addresses[1];
 
@@ -191,13 +193,9 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		conn->creation = t;
 		conn->timestamp = t;
 
-		conn->first_upload = (transferred[0] > 0);
 		conn->uploaded = transferred[0];
-
-		conn->first_download = (transferred[1] > 0);
 		conn->downloaded = transferred[1];
 
-		conn->state = 0;
 		conn->direction = !direction; // Invert direction (this is the second packet).
 
 		fragment->used++;
@@ -217,10 +215,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 
 	conn->timestamp = t;
 
-	conn->first_upload = (conn->uploaded == 0) && (transferred[0] > 0);
 	conn->uploaded += transferred[0];
-
-	conn->first_download = (conn->downloaded == 0) && (transferred[1] > 0);
 	conn->downloaded += transferred[1];
 
 	return true;

@@ -273,15 +273,21 @@ bool sniffer::process_ip_packet(const unsigned char* pkt, size_t len, unsigned t
 #endif // DEBUG
 
 		connection* conn;
-		if (!_M_connections.add(ip_header, tcp_header, payload, t, conn)) {
+		unsigned char dir;
+		if (!_M_connections.add(ip_header, tcp_header, payload, t, conn, dir)) {
 			return false;
 		}
 
-		if (!conn) {
+		if ((!conn) || (payload == 0)) {
 			return true;
 		}
 
-		return _M_packet_processor.process(t, conn, pkt + iphdrlen + tcphdrlen, payload);
+		packet p;
+		p.payload = pkt + iphdrlen + tcphdrlen;
+		p.len = payload;
+		p.direction = dir;
+
+		return _M_packet_processor.process(t, conn, p);
 	} else if (ip_header->protocol == 0x11) {
 		// UDP.
 		if (len < iphdrlen + sizeof(struct udphdr)) {

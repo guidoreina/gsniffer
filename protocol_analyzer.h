@@ -3,10 +3,11 @@
 
 #include <time.h>
 #include "connection.h"
+#include "packet.h"
 
 class protocol_analyzer {
 	public:
-		virtual bool process(time_t t, const connection* conn, const unsigned char* payload, size_t len) = 0;
+		virtual bool process(time_t t, connection* conn, const packet& pkt) = 0;
 };
 
 #endif // PROTOCOL_ANALYZER_H

@@ -25,14 +25,24 @@ struct connection {
 	buffer* in;
 	buffer* out;
 
-	size_t in_offset;
-	size_t out_offset;
-
 	unsigned char state:4;
 	unsigned char direction:1; // 0: Outgoing, 1: Incoming.
 
-	unsigned char first_upload:1;
-	unsigned char first_download:1;
+	union {
+		struct {
+			unsigned short method;
+			unsigned short methodlen;
+
+			unsigned short path;
+			unsigned short pathlen;
+
+			unsigned short host;
+			unsigned short hostlen;
+		} http;
+	} protocol;
+
+	// Initialize.
+	void init();
 
 	// Reset.
 	void reset();

@@ -5,7 +5,14 @@
 
 class http_analyzer : public protocol_analyzer {
 	public:
-		bool process(time_t t, const connection* conn, const unsigned char* payload, size_t len);
+		bool process(time_t t, connection* conn, const packet& pkt);
+
+	protected:
+		static const size_t METHOD_MAX_LEN;
+		static const size_t HOST_MAX_LEN;
+		static const size_t PATH_MAX_LEN;
+
+		static const size_t REQUEST_MAX_LEN;
 };
 
 #endif // HTTP_ANALYZER_H
