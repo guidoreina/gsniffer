@@ -2,12 +2,12 @@
 #include <stdio.h>
 #include <sys/time.h>
 #include <signal.h>
-#include "sniffer.h"
+#include "net/sniffer.h"
 
 static void signal_handler(int nsignal);
 static void handle_alarm(int nsignal);
 
-sniffer sniffer;
+net::sniffer gsniffer;
 
 int main(int argc, char** argv)
 {
@@ -16,7 +16,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
-	if (!sniffer.create(argv[1], argv[2], 32 * 1024 * 1024)) {
+	if (!gsniffer.create(argv[1], argv[2], 32 * 1024 * 1024)) {
 		fprintf(stderr, "Couldn't create sniffer.\n");
 		return -1;
 	}
@@ -41,7 +41,7 @@ int main(int argc, char** argv)
 		return -1;
 	}
 
-	sniffer.start();
+	gsniffer.start();
 
 	return 0;
 }
@@ -50,10 +50,10 @@ void signal_handler(int nsignal)
 {
 	fprintf(stderr, "Signal received...\n");
 
-	sniffer.stop();
+	gsniffer.stop();
 }
 
 void handle_alarm(int nsignal)
 {
-	sniffer.on_alarm();
+	gsniffer.on_alarm();
 }

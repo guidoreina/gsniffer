@@ -9,7 +9,10 @@ LIBS=
 MAKEDEPEND=${CC} -MM
 PROGRAM=sniffer
 
-OBJS =	buffer.o file.o http_logger.o connection.o connection_list.o http_analyzer.o packet_processor.o sniffer.o main.o
+OBJS =	constants/months_and_days.o string/buffer.o fs/file.o util/number.o util/ranges.o \
+	net/connection.o net/connection_list.o net/packet_processor.o net/sniffer.o \
+	net/internet/http/analyzer.o net/internet/http/logger.o net/internet/http/date.o net/internet/http/headers.o \
+	main.o
 
 DEPS:= ${OBJS:%.o=%.d}
 
