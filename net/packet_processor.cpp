@@ -1,7 +1,7 @@
 #include <stdlib.h>
-#include "packet_processor.h"
+#include "net/packet_processor.h"
 
-bool packet_processor::process(time_t t, connection* conn, const packet& pkt)
+bool net::packet_processor::process(time_t t, connection* conn, const packet& pkt)
 {
 	switch (conn->srcport) {
 		case 80:

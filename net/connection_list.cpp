@@ -6,15 +6,10 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <limits.h>
-#include "connection_list.h"
-#include "packet.h"
+#include "net/connection_list.h"
+#include "net/packet.h"
 
-const time_t connection_list::EXPIRATION_TIMEOUT = 2 * 60 * 60;
-const size_t connection_list::NODES_ALLOC = 1024;
-const size_t connection_list::INDICES_ALLOC = 128;
-const size_t connection_list::IP_FRAGMENTS_ALLOC = 32;
-
-connection_list::connection_list() : _M_buf(64 * 1024)
+net::connection_list::connection_list() : _M_buf(64 * 1024)
 {
 	_M_fragments = NULL;
 
@@ -32,7 +27,7 @@ connection_list::connection_list() : _M_buf(64 * 1024)
 	_M_index.used = 0;
 }
 
-void connection_list::free()
+void net::connection_list::free()
 {
 	if (_M_fragments) {
 		for (unsigned i = 0; i < 64 * 1024; i++) {
@@ -62,6 +57,10 @@ void connection_list::free()
 			if (_M_nodes.nodes[i].conn.out) {
 				delete _M_nodes.nodes[i].conn.out;
 			}
+
+			if (_M_nodes.nodes[i].conn.protocol.http.server_headers) {
+				delete _M_nodes.nodes[i].conn.protocol.http.server_headers;
+			}
 		}
 
 		::free(_M_nodes.nodes);
@@ -85,7 +84,7 @@ void connection_list::free()
 	_M_index.used = 0;
 }
 
-bool connection_list::create()
+bool net::connection_list::create()
 {
 	if ((_M_fragments = (struct ip_fragments*) calloc(64 * 1024, sizeof(struct ip_fragments))) == NULL) {
 		return false;
@@ -94,7 +93,7 @@ bool connection_list::create()
 	return true;
 }
 
-bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn, unsigned char& direction)
+bool net::connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tcp_header, size_t payload, time_t t, connection*& conn, unsigned char& direction)
 {
 	ip_address addresses[2];
 	unsigned short ports[2];
@@ -113,7 +112,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		transferred[0] = payload;
 		transferred[1] = 0;
 
-		direction = OUTGOING_PACKET;
+		direction = kOutgoingPacket;
 	} else {
 		addresses[0].ipv4 = ip_header->daddr;
 		addresses[1].ipv4 = ip_header->saddr;
@@ -124,7 +123,7 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 		transferred[0] = 0;
 		transferred[1] = payload;
 
-		direction = INCOMING_PACKET;
+		direction = kIncomingPacket;
 	}
 
 	ip_fragments* fragments = &_M_fragments[ports[0]];
@@ -221,14 +220,14 @@ bool connection_list::add(const struct iphdr* ip_header, const struct tcphdr* tc
 	return true;
 }
 
-void connection_list::delete_expired(time_t now)
+void net::connection_list::delete_expired(time_t now)
 {
 	node* nodes = _M_nodes.nodes;
 
 	while (_M_tail != -1) {
 		connection* conn = &nodes[_M_tail].conn;
 
-		if (conn->timestamp + EXPIRATION_TIMEOUT > now) {
+		if (conn->timestamp + kExpirationTimeout > now) {
 			return;
 		}
 
@@ -243,7 +242,7 @@ void connection_list::delete_expired(time_t now)
 	}
 }
 
-bool connection_list::save(const char* filename, bool ordered)
+bool net::connection_list::save(const char* filename, bool ordered)
 {
 	char tmpfilename[PATH_MAX + 1];
 	snprintf(tmpfilename, sizeof(tmpfilename), "%s.tmp", filename);
@@ -282,7 +281,7 @@ bool connection_list::save(const char* filename, bool ordered)
 	return (rename(tmpfilename, filename) == 0);
 }
 
-void connection_list::print() const
+void net::connection_list::print() const
 {
 	printf("# of connections: %u:\n", _M_nodes.used);
 
@@ -296,7 +295,7 @@ void connection_list::print() const
 	}
 }
 
-bool connection_list::serialize(bool ordered, buffer& buf)
+bool net::connection_list::serialize(bool ordered, string::buffer& buf)
 {
 	const node* nodes = _M_nodes.nodes;
 
@@ -327,11 +326,11 @@ bool connection_list::serialize(bool ordered, buffer& buf)
 	return true;
 }
 
-connection_list::node* connection_list::allocate_node()
+net::connection_list::node* net::connection_list::allocate_node()
 {
 	// If we have to allocate a new node...
 	if (_M_free_node == -1) {
-		size_t size = (_M_nodes.size == 0) ? NODES_ALLOC : _M_nodes.size * 2;
+		size_t size = (_M_nodes.size == 0) ? kNodesAlloc : _M_nodes.size * 2;
 
 		node* nodes;
 		if ((nodes = (struct node*) realloc(_M_nodes.nodes, size * sizeof(struct node))) == NULL) {
@@ -342,12 +341,14 @@ connection_list::node* connection_list::allocate_node()
 		for (i = _M_nodes.size; i < size - 1; i++) {
 			nodes[i].conn.in = NULL;
 			nodes[i].conn.out = NULL;
+			nodes[i].conn.protocol.http.server_headers = NULL;
 
 			nodes[i].next = i + 1;
 		}
 
 		nodes[i].conn.in = NULL;
 		nodes[i].conn.out = NULL;
+		nodes[i].conn.protocol.http.server_headers = NULL;
 
 		nodes[i].next = -1;
 
@@ -384,10 +385,10 @@ connection_list::node* connection_list::allocate_node()
 	return n;
 }
 
-bool connection_list::allocate_index(ip_fragment* fragment)
+bool net::connection_list::allocate_index(ip_fragment* fragment)
 {
 	if (fragment->used == fragment->size) {
-		size_t size = (fragment->size == 0) ? INDICES_ALLOC : fragment->size * 2;
+		size_t size = (fragment->size == 0) ? kIndicesAlloc : fragment->size * 2;
 
 		unsigned* indices;
 		if ((indices = (unsigned*) realloc(fragment->indices, size * sizeof(unsigned))) == NULL) {
@@ -401,10 +402,10 @@ bool connection_list::allocate_index(ip_fragment* fragment)
 	return true;
 }
 
-bool connection_list::allocate_ip_fragment(ip_fragments* fragments)
+bool net::connection_list::allocate_ip_fragment(ip_fragments* fragments)
 {
 	if (fragments->used == fragments->size) {
-		size_t size = (fragments->size == 0) ? IP_FRAGMENTS_ALLOC : fragments->size * 2;
+		size_t size = (fragments->size == 0) ? kIpFragmentsAlloc : fragments->size * 2;
 
 		ip_fragment* f;
 		if ((f = (struct ip_fragment*) realloc(fragments->fragments, size * sizeof(struct ip_fragment))) == NULL) {
@@ -418,7 +419,7 @@ bool connection_list::allocate_ip_fragment(ip_fragments* fragments)
 	return true;
 }
 
-bool connection_list::allocate_indices()
+bool net::connection_list::allocate_indices()
 {
 	if (_M_index.size < _M_nodes.used) {
 		unsigned* indices;
@@ -433,7 +434,7 @@ bool connection_list::allocate_indices()
 	return true;
 }
 
-void connection_list::delete_node(unsigned short srcport, size_t pos, size_t index)
+void net::connection_list::delete_node(unsigned short srcport, size_t pos, size_t index)
 {
 	ip_fragments* fragments = &_M_fragments[srcport];
 	ip_fragment* fragment = &fragments->fragments[pos];
@@ -497,7 +498,7 @@ void connection_list::delete_node(unsigned short srcport, size_t pos, size_t ind
 #endif
 }
 
-bool connection_list::delete_node(unsigned idx)
+bool net::connection_list::delete_node(unsigned idx)
 {
 	connection* conn = &_M_nodes.nodes[idx].conn;
 
@@ -519,7 +520,7 @@ bool connection_list::delete_node(unsigned idx)
 	return true;
 }
 
-connection_list::ip_fragment* connection_list::search(const ip_fragments* fragments, const ip_address& addr, size_t& pos)
+net::connection_list::ip_fragment* net::connection_list::search(const ip_fragments* fragments, const ip_address& addr, size_t& pos)
 {
 	ip_fragment* f = fragments->fragments;
 
@@ -546,7 +547,7 @@ connection_list::ip_fragment* connection_list::search(const ip_fragments* fragme
 	return NULL;
 }
 
-bool connection_list::search(const ip_fragment* fragment, const ip_address& srcip, unsigned short srcport, const ip_address& destip, unsigned short destport, size_t& pos) const
+bool net::connection_list::search(const ip_fragment* fragment, const ip_address& srcip, unsigned short srcport, const ip_address& destip, unsigned short destport, size_t& pos) const
 {
 	const node* nodes = _M_nodes.nodes;
 	const unsigned* indices = fragment->indices;
@@ -591,7 +592,7 @@ bool connection_list::search(const ip_fragment* fragment, const ip_address& srci
 	return false;
 }
 
-bool connection_list::build_index()
+bool net::connection_list::build_index()
 {
 	if (!allocate_indices()) {
 		return false;
@@ -623,7 +624,7 @@ bool connection_list::build_index()
 	return true;
 }
 
-void connection_list::search(const ip_address& srcip, const ip_address& destip, size_t& pos) const
+void net::connection_list::search(const ip_address& srcip, const ip_address& destip, size_t& pos) const
 {
 	const node* nodes = _M_nodes.nodes;
 	const unsigned* indices = _M_index.indices;

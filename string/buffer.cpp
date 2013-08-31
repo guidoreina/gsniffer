@@ -1,12 +1,9 @@
 #include <stdio.h>
-#include "buffer.h"
+#include "string/buffer.h"
 
-const size_t buffer::DEFAULT_INITIAL_SIZE = 64;
-
-bool buffer::allocate(size_t size)
+bool string::buffer::allocate(size_t size)
 {
-	size += _M_used;
-	if (size <= _M_size) {
+	if ((size += _M_used) <= _M_size) {
 		return true;
 	}
 
@@ -33,8 +30,8 @@ bool buffer::allocate(size_t size)
 		s = tmp;
 	}
 
-	char* data = (char*) realloc(_M_data, s);
-	if (!data) {
+	char* data;
+	if ((data = (char*) realloc(_M_data, s)) == NULL) {
 		return false;
 	}
 
@@ -44,7 +41,7 @@ bool buffer::allocate(size_t size)
 	return true;
 }
 
-bool buffer::vformat(const char* format, va_list ap)
+bool string::buffer::vformat(const char* format, va_list ap)
 {
 	if (!allocate(_M_initial_size)) {
 		return false;
@@ -53,8 +50,8 @@ bool buffer::vformat(const char* format, va_list ap)
 	int size = _M_size - _M_used;
 
 	do {
-		int n = vsnprintf(_M_data + _M_used, size, format, ap);
-		if (n > -1) {
+		int n;
+		if ((n = vsnprintf(_M_data + _M_used, size, format, ap)) > -1) {
 			if (n < size) {
 				_M_used += n;
 				break;

@@ -1,10 +1,7 @@
 #include <stdlib.h>
-#include "connection.h"
+#include "net/connection.h"
 
-const size_t connection::IN_BUFFER_ALLOC = 512;
-const size_t connection::OUT_BUFFER_ALLOC = 512;
-
-void connection::init()
+void net::connection::init()
 {
 	state = 0;
 
@@ -16,4 +13,6 @@ void connection::init()
 
 	protocol.http.host = 0;
 	protocol.http.hostlen = 0;
+
+	protocol.http.offset = 0;
 }

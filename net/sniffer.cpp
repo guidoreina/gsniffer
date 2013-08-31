@@ -15,16 +15,12 @@
 #include <netinet/ip.h>
 #include <netinet/tcp.h>
 #include <netinet/udp.h>
-#include "sniffer.h"
+#include "net/sniffer.h"
 
-const size_t sniffer::MIN_SIZE = 1024 * 1024;
-const size_t sniffer::MAX_SIZE = 1024 * 1024 * 1024;
-const size_t sniffer::DEFAULT_SIZE = 100 * 1024 * 1024;
+const char* net::sniffer::kConnectionsFilename = "connections.txt";
+const char* net::sniffer::kPipeFilename = "/tmp/gsniffer.pipe";
 
-const char* sniffer::CONNECTIONS_FILENAME = "connections.txt";
-const char* sniffer::PIPE_FILENAME = "/tmp/gsniffer.pipe";
-
-sniffer::sniffer()
+net::sniffer::sniffer()
 {
 	*_M_interface = 0;
 	_M_fd = -1;
@@ -44,7 +40,7 @@ sniffer::sniffer()
 	_M_handle_alarm = false;
 }
 
-sniffer::~sniffer()
+net::sniffer::~sniffer()
 {
 	if (_M_buf != MAP_FAILED) {
 		munmap(_M_buf, _M_size);
@@ -62,13 +58,13 @@ sniffer::~sniffer()
 		close(_M_pipe);
 	}
 
-	unlink(PIPE_FILENAME);
+	unlink(kPipeFilename);
 }
 
-bool sniffer::create(const char* interface, const char* dir, size_t size)
+bool net::sniffer::create(const char* interface, const char* dir, size_t size)
 {
 	// Sanity check.
-	if ((size < MIN_SIZE) || (size > MAX_SIZE)) {
+	if ((size < kMinSize) || (size > kMaxSize)) {
 		return false;
 	}
 
@@ -84,12 +80,12 @@ bool sniffer::create(const char* interface, const char* dir, size_t size)
 
 	// Create named pipe.
 	umask(0);
-	if ((mkfifo(PIPE_FILENAME, 0666) < 0) && (errno != EEXIST)) {
+	if ((mkfifo(kPipeFilename, 0666) < 0) && (errno != EEXIST)) {
 		return false;
 	}
 
 	// Open named pipe.
-	if ((_M_pipe = open(PIPE_FILENAME, O_RDWR)) < 0) {
+	if ((_M_pipe = open(kPipeFilename, O_RDWR)) < 0) {
 		return false;
 	}
 
@@ -161,7 +157,7 @@ bool sniffer::create(const char* interface, const char* dir, size_t size)
 	return _M_connections.create();
 }
 
-void sniffer::start()
+void net::sniffer::start()
 {
 	_M_running = true;
 
@@ -212,12 +208,12 @@ void sniffer::start()
 				if ((ret = read(_M_pipe, &c, 1)) == 0) {
 					close(_M_pipe);
 
-					if ((_M_pipe = open(PIPE_FILENAME, O_RDWR)) < 0) {
+					if ((_M_pipe = open(kPipeFilename, O_RDWR)) < 0) {
 						_M_running = false;
 					}
 				} else if (ret == 1) {
 					if (c == 1) {
-						if (!_M_connections.save(CONNECTIONS_FILENAME, true)) {
+						if (!_M_connections.save(kConnectionsFilename, true)) {
 							_M_running = false;
 						}
 					}
@@ -235,7 +231,7 @@ void sniffer::start()
 #endif // DEBUG
 }
 
-bool sniffer::process_ip_packet(const unsigned char* pkt, size_t len, unsigned t)
+bool net::sniffer::process_ip_packet(const unsigned char* pkt, size_t len, unsigned t)
 {
 	if (len < sizeof(struct iphdr)) {
 		return true;
